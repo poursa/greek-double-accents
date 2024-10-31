@@ -40,9 +40,10 @@ FALSE_TRISYL = {"χέρια", "μάτια", "πόδια", "λόγια", "δίκ�
 # http://ebooks.edu.gr/ebooks/v/html/8547/2009/Grammatiki_E-ST-Dimotikou_html-apli/index_C8a.html
 PRON_ACC_SING = {
     "με",
-    # "σε", # Example?
+    "σε",
     "τον",
     "την",
+    "τη",
     "το",
 }
 
@@ -61,7 +62,6 @@ PRON_GEN_SING = {
     "σου",
     "του",
     "της",
-    # "τη", # Never happens in double-accents?
     "του",
 }
 
@@ -69,8 +69,6 @@ PRON_GEN_PLUR = {
     "μας",
     "σας",
     "τους",
-    "τις",
-    "τα",
 }
 
 PRON_GEN = {*PRON_GEN_SING, *PRON_GEN_PLUR}
@@ -330,6 +328,21 @@ def semantic_analysis(wi: Entry) -> StateMsg:
                     return StateMsg(State.AMBIGUOUS, "1NOUN 3VERB")
 
             return StateMsg(State.PENDING, "1NOUN")
+        case "ADJ":
+            # The pronoun must be genitive
+            if w2 not in PRON_GEN:
+                return StateMsg(State.CORRECT, f"1ADJ 2{w2}~GEN")
+
+            match pos3:
+                # Ambiguous for nominalized adjectives even in the same case
+                # CEx. του όμορφου του Νίκου / του όμορφού του Νίκου
+                case "NOUN":
+                    if same_case23:
+                        return StateMsg(State.AMBIGUOUS, "1ADJ 2NOUN 23SC")
+                case "VERB":
+                    return StateMsg(State.AMBIGUOUS, "1ADJ 3VERB")
+
+            return StateMsg(State.PENDING, "1ADJ")
         case "ADV":
             return StateMsg(State.CORRECT, "1ADV")
 
@@ -338,7 +351,7 @@ def semantic_analysis(wi: Entry) -> StateMsg:
 
 def main() -> None:
     filepath = Path("book.txt")
-    with filepath.open("r") as file:
+    with filepath.open("r", encoding="utf-8") as file:
         text = file.read().strip()
         find_candidates(text)
 
