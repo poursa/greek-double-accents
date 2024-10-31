@@ -334,8 +334,8 @@ def semantic_analysis(wi: Entry) -> StateMsg:
                 return StateMsg(State.CORRECT, f"1ADJ 2{w2}~GEN")
 
             match pos3:
-                #ambiguous for nominalized adjectives even in the same case
-                #e.g. του όμορφου του Νίκου  vs του όμορφού του Νίκου
+                # Ambiguous for nominalized adjectives even in the same case
+                # CEx. του όμορφου του Νίκου / του όμορφού του Νίκου
                 case "NOUN":
                     if same_case23:
                         return StateMsg(State.AMBIGUOUS, "1ADJ 2NOUN 23Same Case")
