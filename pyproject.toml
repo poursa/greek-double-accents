@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "greek-double-accents"
+version = "1.0.0"
+readme = "README.md"
+dependencies = [
+    "spacy",
+    "greek-accentuation==1.2.0",
+]
+
+[project.optional-dependencies]
+etc = [
+    "pytest",
+    "ruff",
+]
+
+[project.scripts]
+run = "double_accents:main"
+
+[tool.ruff]
+line-length = 100
+output-format = "concise"
+
+[tool.ruff.lint.pycodestyle]
+max-doc-length = 100
+
+[tool.ruff.lint]
+preview = true
+select = [
+    "W",    # pycodestyle warning
+    "I",    # isort
+    "N",    # pep8-naming
+    "F",    # Pyflakes rules
+    "C",    # flake8-complexity
+    "PTH",  # Paths
+    "ANN",  # Annotations
+]
+ignore = [
+    "ANN401",
+]
+
+[tool.mypy]
+explicit_package_bases = true
+ignore_missing_imports = true
