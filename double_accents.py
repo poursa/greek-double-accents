@@ -351,7 +351,7 @@ def semantic_analysis(wi: Entry) -> StateMsg:
 
 def main() -> None:
     filepath = Path("book.txt")
-    with open(filepath, "r", encoding="utf-8") as file:
+    with filepath.open("r", encoding="utf-8") as file:
         text = file.read().strip()
         find_candidates(text)
 
