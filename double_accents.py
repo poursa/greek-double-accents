@@ -331,7 +331,7 @@ def semantic_analysis(wi: Entry) -> StateMsg:
         case "ADJ":
             # The pronoun must be genitive
             if w2 not in PRON_GEN:
-                return StateMsg(State.CORRECT, f"1ADJ 2{w2} not GEN")
+                return StateMsg(State.CORRECT, f"1ADJ 2{w2}~GEN")
 
             match pos3:
                 #ambiguous for nominalized adjectives even in the same case
