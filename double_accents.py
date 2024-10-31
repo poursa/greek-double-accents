@@ -338,7 +338,7 @@ def semantic_analysis(wi: Entry) -> StateMsg:
                 # CEx. του όμορφου του Νίκου / του όμορφού του Νίκου
                 case "NOUN":
                     if same_case23:
-                        return StateMsg(State.AMBIGUOUS, "1ADJ 2NOUN 23Same Case")
+                        return StateMsg(State.AMBIGUOUS, "1ADJ 2NOUN 23SC")
                 case "VERB":
                     return StateMsg(State.AMBIGUOUS, "1ADJ 3VERB")
 
