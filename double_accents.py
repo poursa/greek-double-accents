@@ -17,7 +17,8 @@ import spacy.cli
 
 # For ancient greek but seems to work fine for modern
 # pip install greek-accentuation==1.2.0
-from greek_accentuation.syllabify import syllabify
+from greek_accentuation.accentuation import syllable_add_accent
+from greek_accentuation.syllabify import ACUTE, syllabify
 
 model_name = "el_core_news_sm"
 try:
@@ -28,8 +29,7 @@ except OSError:
     spacy.cli.download(model_name)
     nlp = spacy.load(model_name)
 
-_PUNCT = re.escape(",.!?-;:\n«»\"'")
-PUNCT = re.compile(rf"[{_PUNCT}]")
+PUNCT = re.compile(r"[,.!?;:\n«»\"'·…]")
 VOWEL_ACCENTED = re.compile(r"[έόίύάήώ]")
 
 # These words are parsed as trisyllables by syllabify
@@ -105,7 +105,7 @@ class Entry:
     entry_id: int = 0
     # Otherwise mutable default error etc.
     statemsg: StateMsg = field(default_factory=lambda: StateMsg(State.AMBIGUOUS, "TODO"))
-    semantic_info: dict[str, dict[str, str]] | None = None
+    semantic_info: list[dict[str, str]] | None = None
     # words?
 
     @property
@@ -122,18 +122,32 @@ class Entry:
         assert len(words) == 3
 
         doc = nlp(" ".join(self.line))
-        semantic_info = {}
 
         # TODO: Keep the tokens for the whole sentence to debug
 
+        # Reconcile both splitting methods (can FAIL but rare)
+        # Uses the fact the we know that word 1 and 2 have no punctuation
+        doc_buf = []
         for token in doc:
-            word, _ = split_punctuation(token.text)
-            if words.count(word) > 1:
-                raise ValueError("The word appears twice in the sentence")
-            if word not in words:
+            if token.pos_ == "PUNCT":
                 continue
-            semantic_info[word] = {}
-            semantic_info[word]["pos"] = token.pos_
+            cur_idx = len(doc_buf)
+            if words[cur_idx] in token.text:
+                doc_buf.append(token)
+                if cur_idx == 2:
+                    break
+            else:
+                doc_buf = []
+        assert len(doc_buf) == 3
+
+        # The key can't be the word in case of duplicates:
+        # words = ['φρούριο', 'σε', 'φρούριο']
+        semantic_info = [{"None": "None"} for _ in range(3)]
+        for idx, token in enumerate(doc_buf):
+            word = token.text
+            semantic_info[idx] = {}
+            semantic_info[idx]["word"] = word
+            semantic_info[idx]["pos"] = token.pos_
             if word == words[1]:
                 # Why does spacy thinks that σου is an ADV/ADJ/NOUN?
                 if word != "σου":
@@ -142,11 +156,26 @@ class Entry:
                         "PRON",
                         "ADP",  # με
                     ), f"Unexpected pos {token.pos_} from {token.text}"
-            semantic_info[word]["case"] = token.morph.get("Case", ["X"])[0]
+            semantic_info[idx]["case"] = token.morph.get("Case", ["X"])[0]
 
         assert len(semantic_info) == 3, f"{semantic_info}\n{words}\n{self.word} || {self.line}"
 
         self.semantic_info = semantic_info
+
+    def show_semantic_info(self) -> None:
+        wi = self
+        assert wi.semantic_info
+        try:
+            si1, si2, si3 = wi.semantic_info
+        except Exception as e:
+            print(wi.line)
+            print(wi.word)
+            print(wi.semantic_info)
+            raise e
+        pos1 = si1["pos"]
+        pos2 = si2["pos"]
+        pos3 = si3["pos"]
+        print(pos1, pos2, pos3, " || ", si1["case"], si2["case"], si3["case"])
 
     def detailed_str(self) -> str:
         hstart = "\033[1m"
@@ -168,60 +197,74 @@ class Entry:
         return self.detailed_str()
 
 
-def find_candidates(text: str) -> None:
-    lines = text.splitlines()
+def add_accent(word: str) -> str:
+    syls = syllabify(word)
+    nsyls = syls[:-1] + [syllable_add_accent(syls[-1], ACUTE)]
+    return "".join(nsyls)
 
-    n_candidates_total = 0
-    record = {State.CORRECT: 0, State.INCORRECT: 0, State.PENDING: 0, State.AMBIGUOUS: 0}
 
-    for n_par, paragraph in enumerate(lines, start=1):
-        par_lines = re.findall(r"[^.!?;:]+[.!?;:]?", paragraph)
-        for n_line, line in enumerate(par_lines, start=1):
+def analyze_text(text: str, replace: bool) -> str:
+    paragraphs = text.splitlines()
+    n_entries_total = 0
+    record = {
+        State.CORRECT: 0,
+        State.INCORRECT: 0,
+        State.PENDING: 0,
+        State.AMBIGUOUS: 0,
+    }
+
+    line_re = re.compile(r"[^.!?;:…»]+(?:[.!?;:…»\n]+,?)?")
+    new_text = []
+
+    for parno, paragraph in enumerate(paragraphs, start=1):
+        new_paragraph = []
+        par_lines = line_re.findall(paragraph)
+
+        for lineno, line in enumerate(par_lines, start=1):
+            new_line = []
             if line := line.strip():
-                # print(f"[{n_par}:{n_line}] Line:", line, "\n", paragraph)
-                states = fix_lines(line, n_par, n_candidates_total)
-                n_candidates_total += len(states)
-                for state in states:
-                    record[state] += 1
+                # print(f"[{parno}:{lineno}] Line:", line, "\n", paragraph)
+                line_info = analyze_line(line, parno, n_entries_total)
+                for word, info in line_info:
+                    if info is None:
+                        new_line.append(word)
+                    else:
+                        state = info.statemsg.state
+                        n_entries_total += 1
+                        record[state] += 1
+
+                        if state == State.INCORRECT and replace:
+                            new_line.append(add_accent(word))
+                        else:
+                            new_line.append(word)
+
+            new_paragraph.append(" ".join(new_line))
+        new_text.append(" ".join(new_paragraph))
 
         # TODO: remove
-        if n_candidates_total >= 7000:
+        if n_entries_total >= 7000:
             break
 
-    print(f"\nFound {n_candidates_total} candidates.")
+    print(f"\nFound {n_entries_total} candidates.")
     for state, cnt in record.items():
         print(f"{str(state)[6:]:<9} {cnt}")
 
+    return "\n".join(new_text)
 
-def fix_lines(line: str, n_line: int, n_candidates_total: int) -> list[State]:
-    """TODO: return (fixed_sentence, n_errors)"""
+
+def analyze_line(line: str, lineno: int, n_entries_total: int) -> list[tuple[str, None | Entry]]:
     words = line.split()
-    n_words = len(words)
     cnt = 0
     states = []
+    line_info = []
 
     for idx, word in enumerate(words):
-        # TODO: export this into a function
-
-        # Word is at the end
-        if idx == n_words - 1:
-            continue
-
-        # Punctuation automatically makes this word correct
-        word, wpunct = split_punctuation(word)
-        if wpunct:
-            continue
-
-        # Need at least three syllables, with the antepenult accented...
-        syllables = syllabify(word)
-        if len(syllables) < 3 or not VOWEL_ACCENTED.search(syllables[-3]):
-            continue
-        # ...and the last one unaccented (otherwise it is not an error)
-        if VOWEL_ACCENTED.search(syllables[-1]):
+        if simple_checks(word, idx, len(words)):
+            line_info.append((word, None))
             continue
 
         # From here on, it is tricky
-        entry = Entry(word, idx, words, n_line, n_candidates_total + cnt)
+        entry = Entry(word, idx, words, lineno, n_entries_total + cnt)
         cnt += 1
 
         statemsg = fix_entry(entry)
@@ -230,33 +273,43 @@ def fix_lines(line: str, n_line: int, n_candidates_total: int) -> list[State]:
         # Tested to correctly work: ignore them
         to_ignore = ("2~3SYL", "2~PRON")
         if statemsg.msg in to_ignore:
+            line_info.append((word, None))
             continue
 
-        # At this point you are an error / undecidable
         print(entry)
 
-        # Quick print semantic info if PENDING
+        # Debug print semantic info if PENDING
         if entry.statemsg.state == State.PENDING:
-            wi = entry
-            assert wi.semantic_info
-            try:
-                w1, w2, w3 = wi.words[:3]
-                si1 = wi.semantic_info[w1]
-                si2 = wi.semantic_info[w2]
-                si3 = wi.semantic_info[w3]
-            except Exception as e:
-                print(wi.line)
-                print(wi.word)
-                print(wi.semantic_info)
-                raise e
-            pos1 = si1["pos"]
-            pos2 = si2["pos"]
-            pos3 = si3["pos"]
-            print(pos1, pos2, pos3, " || ", si1["case"], si2["case"], si3["case"])
+            entry.show_semantic_info()
 
+        line_info.append((word, entry))
         states.append(entry.statemsg.state)
 
-    return states
+    return line_info
+
+
+def simple_checks(word: str, idx: int, lwords: int) -> bool:
+    """Discard a word based on punctuation and number of syllables.
+    Returns True if we can discard the word, False otherwise.
+    """
+    # Word is at the end
+    if idx == lwords - 1:
+        return True
+
+    # Punctuation automatically makes this word correct
+    word, wpunct = split_punctuation(word)
+    if wpunct:
+        return True
+
+    # Need at least three syllables, with the antepenult accented...
+    syllables = syllabify(word)
+    if len(syllables) < 3 or not VOWEL_ACCENTED.search(syllables[-3]):
+        return True
+    # ...and the last one unaccented (otherwise it is not an error)
+    if VOWEL_ACCENTED.search(syllables[-1]):
+        return True
+
+    return False
 
 
 def fix_entry(entry: Entry) -> StateMsg:
@@ -284,9 +337,7 @@ def semantic_analysis(wi: Entry) -> StateMsg:
     assert wi.semantic_info
     try:
         w1, w2, w3 = wi.words[:3]
-        si1 = wi.semantic_info[w1]
-        si2 = wi.semantic_info[w2]
-        si3 = wi.semantic_info[w3]
+        si1, si2, si3 = wi.semantic_info
     except Exception as e:
         print(wi.line)
         print(wi.word)
@@ -346,14 +397,19 @@ def semantic_analysis(wi: Entry) -> StateMsg:
         case "ADV":
             return StateMsg(State.CORRECT, "1ADV")
 
-    return StateMsg(State.AMBIGUOUS, "TODO")
+    return StateMsg(State.PENDING, "TODO")
 
 
-def main() -> None:
+def main(replace: bool = True) -> None:
     filepath = Path("book.txt")
     with filepath.open("r", encoding="utf-8") as file:
         text = file.read().strip()
-        find_candidates(text)
+        new_text = analyze_text(text, replace)
+
+    if replace:
+        with filepath.open("w", encoding="utf-8") as file:
+            file.write(new_text)
+        print(f"The text has been updated in '{filepath}'.")
 
 
 if __name__ == "__main__":
